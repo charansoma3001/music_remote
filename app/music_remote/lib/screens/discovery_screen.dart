@@ -146,6 +146,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
 
   /// Scan for servers using mDNS
   Future<void> _scanForServers() async {
+    if (!mounted) return;
+
     setState(() {
       _isScanning = true;
       _discoveredServers = [];
@@ -155,6 +157,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
       final servers = await MDNSDiscoveryService.discoverServers(
         timeout: const Duration(seconds: 5),
       );
+
+      if (!mounted) return;
 
       setState(() {
         _discoveredServers = servers;
@@ -170,6 +174,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
         );
       }
     } catch (e) {
+      if (!mounted) return;
+
       setState(() {
         _isScanning = false;
       });

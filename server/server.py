@@ -3,14 +3,22 @@ Flask server for controlling Apple Music remotely.
 Provides REST API endpoints and mDNS service advertisement.
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
+from flask_socketio import SocketIO, emit, disconnect
 from functools import wraps
 import socket
 from zeroconf import ServiceInfo, Zeroconf
 import applescript_commands as asc
 from config import Config
+from music_monitor import MusicMonitor
+import time # Added for socketio ping timestamp
 
+# Initialize Flask app and SocketIO
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'music-remote-secret-key'  # Change in production
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+# Load configuration
 config = Config()
 
 
@@ -168,7 +176,6 @@ def play_playlist(playlist_name):
 @require_auth
 def get_artwork():
     """Get artwork for the current track."""
-    from flask import send_file
     import os
     
     artwork_path = asc.get_artwork()
@@ -357,8 +364,62 @@ def set_shuffle():
     result = asc.set_shuffle_mode(enabled)
     return jsonify({'action': 'set_shuffle', 'enabled': enabled, 'result': result})
 
+# WebSocket event handlers
+
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection."""
+    # Get auth token from query params or headers
+    auth_token = request.args.get('token')
+    
+    if not auth_token or auth_token != config.auth_token:
+        print(f"❌ WebSocket auth failed from {request.remote_addr}")
+        disconnect()
+        return False
+    
+    print(f"✅ WebSocket client connected: {request.sid}")
+    # Send initial state
+    try:
+        track = asc.get_current_track()
+        status = asc.get_playback_state() # Changed from get_player_state() to get_playback_state() for consistency
+        emit('initial_state', {
+            'track': track,
+            'status': status
+        })
+    except Exception as e:
+        print(f"Error sending initial state: {e}")
 
 
+@socketio.on('disconnect')
+def handle_disconnect():
+    """Handle client disconnection."""
+    print(f"❌ WebSocket client disconnected: {request.sid}")
+
+
+@socketio.on('ping')
+def handle_ping():
+    """Handle ping from client."""
+    emit('pong', {'timestamp': time.time()})
+
+
+# Music monitor callback
+def on_music_change(changes):
+    """Broadcast music state changes to all connected clients."""
+    try:
+        socketio.emit('music_update', changes)
+        print(f"📢 Broadcast: {changes.get('type')}")
+    except Exception as e:
+        print(f"Broadcast error: {e}")
+
+
+# Initialize music monitor
+music_monitor = MusicMonitor(on_change_callback=on_music_change)
+music_monitor.start()
+
+
+# Global variables for zeroconf
+zeroconf = None
+service_info = None
 
 def get_local_ip():
     """Get the local IP address of this machine."""
@@ -373,9 +434,9 @@ def get_local_ip():
         return "127.0.0.1"
 
 
-def advertise_service(port):
+def start_mdns_service(local_ip, port):
     """Advertise the service via mDNS/Zeroconf."""
-    local_ip = get_local_ip()
+    global zeroconf, service_info
     
     print(f"\n📡 Starting mDNS service advertisement...")
     print(f"   Local IP: {local_ip}")
@@ -395,37 +456,38 @@ def advertise_service(port):
     zeroconf.register_service(service_info)
     print("✅ mDNS service registered successfully!")
     print(f"   Service name: MacMusicRemote._applemusic._tcp.local.\n")
-    
-    return zeroconf, service_info
 
 
 if __name__ == '__main__':
-    # Display authentication token
-    config.display_token()
-    
-    # Start mDNS advertisement
-    zeroconf, service_info = advertise_service(config.port)
-    
-    # Display QR code for easy setup
-    server_url = f"http://{get_local_ip()}:{config.port}"
-    config.display_qr_code(server_url)
-    
     try:
-        print(f"🚀 Starting Flask server on {config.host}:{config.port}")
-        print(f"   Access at: {server_url}\n")
-        print("Press Ctrl+C to stop the server\n")
+        # Display token and QR code
+        config.display_token()
         
-        # Run Flask app
-        app.run(
+        # Get local IP and start mDNS
+        local_ip = get_local_ip()
+        start_mdns_service(local_ip, config.port)
+        
+        # Display QR code for mobile
+        server_url = f'http://{local_ip}:{config.port}'
+        config.display_qr_code(server_url)
+        
+        print(f"\n🚀 Starting Flask server with WebSocket on {config.host}:{config.port}")
+        print(f"   Access at: {server_url}")
+        print(f"\n📡 WebSocket endpoint: ws://{local_ip}:{config.port}/socket.io/")
+        print("\nPress Ctrl+C to stop the server\n")
+        
+        # Run with SocketIO
+        socketio.run(
+            app,
             host=config.host,
             port=config.port,
-            debug=False
+            debug=False,
+            allow_unsafe_werkzeug=True
         )
     except KeyboardInterrupt:
-        print("\n\n🛑 Shutting down server...")
+        print("\n✅ Server stopped successfully")
+        music_monitor.stop()
     finally:
-        # Cleanup mDNS service
-        zeroconf.unregister_service(service_info)
-        zeroconf.close()
-        print("✅ Server stopped successfully\n")
-
+        if zeroconf:
+            zeroconf.unregister_service(service_info)
+            zeroconf.close()

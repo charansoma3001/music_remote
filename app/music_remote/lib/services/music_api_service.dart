@@ -148,10 +148,9 @@ class MusicApiService {
   }
 
   /// Get artwork URL for current track
-  String? getArtworkUrl() {
-    // Return URL that can be used with CachedNetworkImage
-    // The artwork endpoint requires auth, so we include the token
-    return '$baseUrl/artwork?t=${DateTime.now().millisecondsSinceEpoch}';
+  String getArtworkUrl() {
+    // Don't add timestamp - let CachedNetworkImage handle caching
+    return '$baseUrl/artwork';
   }
 
   /// Seek to a specific position in the track

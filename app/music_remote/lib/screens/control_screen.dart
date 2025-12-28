@@ -122,7 +122,6 @@ class _ControlScreenState extends State<ControlScreen> {
                         width: 280,
                         height: 280,
                         decoration: BoxDecoration(
-                          color: Colors.grey[200],
                           borderRadius: BorderRadius.circular(16),
                           boxShadow: [
                             BoxShadow(
@@ -132,28 +131,44 @@ class _ControlScreenState extends State<ControlScreen> {
                             ),
                           ],
                         ),
-                        child: provider.artworkUrl != null
-                            ? CachedNetworkImage(
-                                imageUrl: provider.artworkUrl!,
-                                fit: BoxFit.cover,
-                                httpHeaders: {
-                                  'Authorization':
-                                      'Bearer ${provider.authToken ?? ""}',
-                                },
-                                placeholder: (context, url) => const Center(
-                                  child: CircularProgressIndicator(),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: provider.artworkUrl != null
+                              ? CachedNetworkImage(
+                                  imageUrl: provider.artworkUrl!,
+                                  // Use track info as cache key so it updates when track changes
+                                  cacheKey:
+                                      '${provider.currentTrack.name}_${provider.currentTrack.artist}',
+                                  httpHeaders: {
+                                    'Authorization':
+                                        'Bearer ${provider.authToken}',
+                                  },
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => Container(
+                                    color: Colors.grey[300],
+                                    child: const Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                  ),
+                                  errorWidget: (context, url, error) =>
+                                      Container(
+                                        color: Colors.grey[300],
+                                        child: const Icon(
+                                          Icons.music_note_rounded,
+                                          size: 80,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                )
+                              : Container(
+                                  color: Colors.grey[300],
+                                  child: const Icon(
+                                    Icons.music_note_rounded,
+                                    size: 80,
+                                    color: Colors.grey,
+                                  ),
                                 ),
-                                errorWidget: (context, url, error) => Icon(
-                                  Icons.music_note_rounded,
-                                  size: 120,
-                                  color: Colors.grey[400],
-                                ),
-                              )
-                            : Icon(
-                                Icons.music_note_rounded,
-                                size: 120,
-                                color: Colors.grey[400],
-                              ),
+                        ),
                       ),
                     ),
 

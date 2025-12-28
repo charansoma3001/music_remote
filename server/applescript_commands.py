@@ -433,7 +433,16 @@ def get_repeat_mode():
     """Get the current repeat mode (off, one, all)."""
     script = '''
     tell application "Music"
-        return song repeat of current playlist as string
+        set repeatMode to song repeat
+        if repeatMode is off then
+            return "off"
+        else if repeatMode is one then
+            return "one"
+        else if repeatMode is all then
+            return "all"
+        else
+            return "off"
+        end if
     end tell
     '''
     result = execute_applescript(script)
@@ -449,7 +458,7 @@ def set_repeat_mode(mode):
     """
     script = f'''
     tell application "Music"
-        set song repeat of current playlist to {mode}
+        set song repeat to {mode}
         return "Repeat set to: {mode}"
     end tell
     '''
@@ -460,7 +469,7 @@ def get_shuffle_mode():
     """Get the current shuffle mode (true/false)."""
     script = '''
     tell application "Music"
-        return shuffle enabled of current playlist
+        return shuffle enabled
     end tell
     '''
     result = execute_applescript(script)
@@ -477,7 +486,7 @@ def set_shuffle_mode(enabled):
     mode = 'true' if enabled else 'false'
     script = f'''
     tell application "Music"
-        set shuffle enabled of current playlist to {mode}
+        set shuffle enabled to {mode}
         return "Shuffle: {mode}"
     end tell
     '''
