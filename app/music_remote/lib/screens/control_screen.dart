@@ -215,7 +215,12 @@ class _ControlScreenState extends State<ControlScreen> {
                           ),
                           Expanded(
                             child: Slider(
-                              value: provider.currentTrack.position,
+                              value: provider.currentTrack.position.clamp(
+                                0.0,
+                                provider.currentTrack.duration > 0
+                                    ? provider.currentTrack.duration
+                                    : 1.0,
+                              ),
                               max: provider.currentTrack.duration > 0
                                   ? provider.currentTrack.duration
                                   : 1,

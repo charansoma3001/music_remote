@@ -211,20 +211,26 @@ class MusicProvider with ChangeNotifier {
 
     // Update position every second while playing
     _positionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (_currentTrack.isPlaying &&
-          _currentTrack.position < _currentTrack.duration) {
+      if (_currentTrack.isPlaying) {
+        final newPosition = _currentTrack.position + 1.0;
+
+        // Clamp position to duration to prevent overflow
+        final clampedPosition = newPosition.clamp(0.0, _currentTrack.duration);
+
         _currentTrack = TrackInfo(
           name: _currentTrack.name,
           artist: _currentTrack.artist,
           album: _currentTrack.album,
           duration: _currentTrack.duration,
-          position: _currentTrack.position + 1.0,
+          position: clampedPosition,
           state: _currentTrack.state,
         );
         notifyListeners();
-      } else if (_currentTrack.position >= _currentTrack.duration) {
-        // Track ended
-        _stopPositionTimer();
+
+        // Stop timer if we've reached the end
+        if (clampedPosition >= _currentTrack.duration) {
+          _stopPositionTimer();
+        }
       }
     });
   }
@@ -250,6 +256,13 @@ class MusicProvider with ChangeNotifier {
       final status = results[1] as Map<String, dynamic>;
       _volume = (status['volume'] ?? 50).toDouble();
       _errorMessage = null;
+
+      // Start position timer if playing (important for reconnection)
+      if (_currentTrack.isPlaying) {
+        _startPositionTimer();
+      } else {
+        _stopPositionTimer();
+      }
 
       notifyListeners();
     } catch (e) {
