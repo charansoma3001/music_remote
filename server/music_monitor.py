@@ -54,7 +54,9 @@ class MusicMonitor:
                 if changes:
                     # Broadcast changes to all connected clients
                     self.on_change_callback(changes)
-                    self.last_state = current_state
+                
+                # Always update last_state, even for position-only changes
+                self.last_state = current_state
                     
             except Exception as e:
                 print(f"Monitor error: {e}")
@@ -66,7 +68,17 @@ class MusicMonitor:
         """Get current Music.app state."""
         try:
             track_info = asc.get_current_track()
-            status = asc.get_player_state()
+            # Get playback state  
+            state = 'stopped'
+            try:
+                state_result = asc.execute_applescript('''
+                    tell application "Music"
+                        return player state as string
+                    end tell
+                ''')
+                state = state_result.strip().lower() if state_result else 'stopped'
+            except:
+                pass
             
             return {
                 'track_name': track_info.get('name'),
@@ -74,8 +86,8 @@ class MusicMonitor:
                 'track_album': track_info.get('album'),
                 'position': track_info.get('position', 0),
                 'duration': track_info.get('duration', 0),
-                'state': status.get('state', 'stopped'),
-                'volume': status.get('volume', 50),
+                'state': state,
+                'volume': 50,  # We'll get this from status endpoint if needed
             }
         except Exception:
             return {}
@@ -85,7 +97,7 @@ class MusicMonitor:
         Compare current state with last state and return changes.
         
         Returns:
-            Dict with only the changed fields.
+            Dict with only the changed fields, or None if no significant changes.
         """
         if not self.last_state:
             # First run - return full state
@@ -117,12 +129,8 @@ class MusicMonitor:
                 changes['type'] = 'volume_changed'
             changes['volume'] = current_state.get('volume')
             
-        # Position updates (only if significant - more than 2 seconds)
-        position_diff = abs(
-            current_state.get('position', 0) - self.last_state.get('position', 0)
-        )
-        if position_diff > 2 and not changes.get('type'):
-            changes['type'] = 'position_update'
-            changes['position'] = current_state.get('position')
+        # Don't broadcast position-only updates
+        # The client's seek bar will handle smooth animation
+        # Only broadcast if there are actual changes above
             
-        return changes
+        return changes if changes else None

@@ -5,15 +5,18 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/track_info.dart';
 import '../models/search_result.dart';
 import '../services/music_api_service.dart';
+import '../services/websocket_service.dart';
 
 /// Provider for managing music playback state
 class MusicProvider with ChangeNotifier {
   MusicApiService? _apiService;
+  WebSocketService? _websocketService;
   TrackInfo _currentTrack = TrackInfo();
   String? _errorMessage;
   Timer? _refreshTimer;
   String _repeatMode = 'off'; // 'off', 'one', 'all'
   bool _isShuffleEnabled = false;
+  bool _useWebSocket = true; // Toggle between WebSocket and polling
   double _volume = 0.5;
 
   // Getters
@@ -46,8 +49,7 @@ class MusicProvider with ChangeNotifier {
       final isReachable = await _apiService!.ping();
 
       if (isReachable) {
-        // Connection successful
-        notifyListeners();
+        // Connected successfully
         _errorMessage = null;
 
         // Save connection settings
@@ -55,8 +57,15 @@ class MusicProvider with ChangeNotifier {
         await prefs.setString('server_url', serverUrl);
         await prefs.setString('auth_token', authToken);
 
-        // Start auto-refresh
-        _startAutoRefresh();
+        // Setup WebSocket for real-time updates (primary)
+        if (_useWebSocket) {
+          _setupWebSocket(serverUrl, authToken);
+          // Don't start polling - WebSocket will handle updates
+          // If WebSocket fails, onDisconnected callback will start polling
+        } else {
+          // Fallback to polling if WebSocket disabled
+          _startAutoRefresh();
+        }
 
         // Initial data fetch
         await refresh();
@@ -79,12 +88,76 @@ class MusicProvider with ChangeNotifier {
     }
   }
 
+  /// Setup WebSocket connection for real-time updates
+  void _setupWebSocket(String serverUrl, String authToken) {
+    if (!_useWebSocket) return;
+
+    _websocketService = WebSocketService(
+      serverUrl: serverUrl,
+      authToken: authToken,
+    );
+
+    _websocketService!.onConnected = () {
+      print('🎵 WebSocket connected - stopping polling');
+      _stopAutoRefresh(); // Stop polling when WebSocket connects
+    };
+
+    _websocketService!.onDisconnected = () {
+      print('⚠️ WebSocket disconnected - falling back to polling');
+      _startAutoRefresh(); // Restart polling as fallback
+    };
+
+    _websocketService!.onMusicUpdate = (data) {
+      _handleWebSocketUpdate(data);
+    };
+
+    _websocketService!.connect();
+  }
+
+  /// Handle WebSocket music updates
+  void _handleWebSocketUpdate(Map<String, dynamic> data) {
+    try {
+      final type = data['type'];
+      print('📢 WebSocket update: $type');
+
+      // Handle different update types
+      if (type == 'initial_state' || type == 'full_update') {
+        // Full state update
+        refresh(); // Do a full refresh
+      } else if (type == 'track_changed') {
+        // Track changed - refresh everything
+        refresh();
+      } else if (type == 'playback_state_changed') {
+        // Just update the playing state
+        if (data['state'] != null) {
+          _currentTrack = TrackInfo(
+            name: _currentTrack.name,
+            artist: _currentTrack.artist,
+            album: _currentTrack.album,
+            duration: _currentTrack.duration,
+            position: _currentTrack.position,
+            state: data['state'],
+          );
+          notifyListeners();
+        }
+      } else if (type == 'volume_changed') {
+        if (data['volume'] != null) {
+          _volume = (data['volume'] as num).toDouble();
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      print('Error handling WebSocket update: $e');
+    }
+  }
+
   /// Disconnect from server
   void disconnect() {
     _stopAutoRefresh();
+    _websocketService?.disconnect();
+    _websocketService = null;
     _apiService = null;
     // Disconnected
-    notifyListeners();
     _currentTrack = TrackInfo();
     _errorMessage = null;
     notifyListeners();
@@ -365,6 +438,8 @@ class MusicProvider with ChangeNotifier {
   @override
   void dispose() {
     _stopAutoRefresh();
+    _websocketService?.disconnect();
+    _websocketService?.dispose();
     super.dispose();
   }
 }
