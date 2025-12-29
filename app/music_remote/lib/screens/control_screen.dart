@@ -221,7 +221,7 @@ class _ControlScreenState extends State<ControlScreen> {
                                   : 1,
                               onChanged: (value) {
                                 // Seek to new position
-                                provider.seekTo(value);
+                                provider.seekToPosition(value);
                               },
                             ),
                           ),
@@ -327,6 +327,9 @@ class _ControlScreenState extends State<ControlScreen> {
                                 max: 100,
                                 divisions: 20,
                                 label: provider.volume.toString(),
+                                onChangeEnd: (value) {
+                                  provider.setVolume(value.toInt());
+                                },
                                 onChanged: (value) {
                                   provider.setVolume(value.toInt());
                                 },

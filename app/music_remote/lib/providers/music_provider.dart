@@ -14,6 +14,7 @@ class MusicProvider with ChangeNotifier {
   TrackInfo _currentTrack = TrackInfo();
   String? _errorMessage;
   Timer? _refreshTimer;
+  Timer? _positionTimer; // For smooth position updates
   String _repeatMode = 'off'; // 'off', 'one', 'all'
   bool _isShuffleEnabled = false;
   bool _useWebSocket = true; // Toggle between WebSocket and polling
@@ -125,19 +126,28 @@ class MusicProvider with ChangeNotifier {
         // Full state update
         refresh(); // Do a full refresh
       } else if (type == 'track_changed') {
-        // Track changed - refresh everything
-        refresh();
+        // Track changed - refresh everything and reset position timer
+        refresh().then((_) => _startPositionTimer());
       } else if (type == 'playback_state_changed') {
-        // Just update the playing state
+        // Play/pause state changed
         if (data['state'] != null) {
+          final newState = data['state'] as String;
           _currentTrack = TrackInfo(
             name: _currentTrack.name,
             artist: _currentTrack.artist,
             album: _currentTrack.album,
             duration: _currentTrack.duration,
             position: _currentTrack.position,
-            state: data['state'],
+            state: newState,
           );
+
+          // Start/stop position timer based on state
+          if (newState == 'playing') {
+            _startPositionTimer();
+          } else {
+            _stopPositionTimer();
+          }
+
           notifyListeners();
         }
       } else if (type == 'volume_changed') {
@@ -154,6 +164,7 @@ class MusicProvider with ChangeNotifier {
   /// Disconnect from server
   void disconnect() {
     _stopAutoRefresh();
+    _stopPositionTimer();
     _websocketService?.disconnect();
     _websocketService = null;
     _apiService = null;
@@ -192,6 +203,38 @@ class MusicProvider with ChangeNotifier {
     _refreshTimer = null;
   }
 
+  /// Start position interpolation timer
+  void _startPositionTimer() {
+    _stopPositionTimer();
+
+    if (!_currentTrack.isPlaying) return;
+
+    // Update position every second while playing
+    _positionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_currentTrack.isPlaying &&
+          _currentTrack.position < _currentTrack.duration) {
+        _currentTrack = TrackInfo(
+          name: _currentTrack.name,
+          artist: _currentTrack.artist,
+          album: _currentTrack.album,
+          duration: _currentTrack.duration,
+          position: _currentTrack.position + 1.0,
+          state: _currentTrack.state,
+        );
+        notifyListeners();
+      } else if (_currentTrack.position >= _currentTrack.duration) {
+        // Track ended
+        _stopPositionTimer();
+      }
+    });
+  }
+
+  /// Stop position interpolation timer
+  void _stopPositionTimer() {
+    _positionTimer?.cancel();
+    _positionTimer = null;
+  }
+
   /// Refresh current track info and status
   Future<void> refresh() async {
     if (_apiService == null || !isConnected) return;
@@ -213,7 +256,6 @@ class MusicProvider with ChangeNotifier {
       _errorMessage = 'Failed to refresh: $e';
       // Failed to refresh
       notifyListeners();
-      notifyListeners();
     }
   }
 
@@ -223,8 +265,8 @@ class MusicProvider with ChangeNotifier {
 
     try {
       await _apiService!.play();
-      await Future.delayed(const Duration(milliseconds: 500));
-      await refresh();
+      _startPositionTimer(); // Start local position updates
+      await refresh(); // Refresh to get actual state from server
     } catch (e) {
       _errorMessage = 'Failed to play: $e';
       notifyListeners();
@@ -237,8 +279,8 @@ class MusicProvider with ChangeNotifier {
 
     try {
       await _apiService!.pause();
-      await Future.delayed(const Duration(milliseconds: 500));
-      await refresh();
+      _stopPositionTimer(); // Stop local position updates
+      await refresh(); // Refresh to get actual state from server
     } catch (e) {
       _errorMessage = 'Failed to pause: $e';
       notifyListeners();
@@ -296,13 +338,12 @@ class MusicProvider with ChangeNotifier {
     }
   }
 
-  /// Seek to a specific position
-  Future<void> seekTo(double position) async {
+  /// Seek to a specific position in the track
+  Future<void> seekToPosition(double position) async {
     if (_apiService == null) return;
 
     try {
-      await _apiService!.seekToPosition(position);
-      // Update local position immediately for UI responsiveness
+      // Immediately update local position for responsive UI
       _currentTrack = TrackInfo(
         name: _currentTrack.name,
         artist: _currentTrack.artist,
@@ -313,6 +354,14 @@ class MusicProvider with ChangeNotifier {
         artworkUrl: _currentTrack.artworkUrl,
       );
       notifyListeners();
+
+      // Send seek request to server
+      await _apiService!.seekToPosition(position);
+
+      // Restart position timer if playing
+      if (_currentTrack.isPlaying) {
+        _startPositionTimer();
+      }
       // Refresh after a short delay to get actual position
       await Future.delayed(const Duration(milliseconds: 500));
       await refresh();
@@ -438,6 +487,7 @@ class MusicProvider with ChangeNotifier {
   @override
   void dispose() {
     _stopAutoRefresh();
+    _stopPositionTimer();
     _websocketService?.disconnect();
     _websocketService?.dispose();
     super.dispose();
